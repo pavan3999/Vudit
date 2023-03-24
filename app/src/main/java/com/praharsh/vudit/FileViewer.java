@@ -25,6 +25,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.view.ContextMenu;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
@@ -73,6 +74,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
@@ -92,56 +94,52 @@ public class FileViewer extends AppCompatActivity
         SearchView.OnQueryTextListener {
     private static final int REQUEST_ID_MULTIPLE_PERMISSIONS = 1, SDCARD_WRITE_PERMISSION_REQUEST_CODE = 100;
     private static final String tempPath = Environment.getExternalStorageDirectory().getPath() + "/Vudit/temp/";
-    private static final String[] requiredpermissions = {
+    private static final String[] requiredPermissions = {
             Manifest.permission.READ_EXTERNAL_STORAGE,
             Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            Manifest.permission.MANAGE_EXTERNAL_STORAGE,
             Manifest.permission.INTERNET,
             Manifest.permission.ACCESS_NETWORK_STATE,
     };
-    private static boolean mBusy = false, recentsView = false, favouritesView = false, homeView = true;
+
+    private enum MediaFileType {
+        Image, Audio, Video, Document, Archive, Text, APK,
+    }
+
+    private static boolean isValid, mBusy = false, recentsView = false, favouritesView = false, homeView = true, sortDesc = false, listFoldersFirst = true, storeRecentItems = true, showHiddenFiles = true;
     private static ViewHolder holder;
     private Toolbar toolbar;
     private DrawerLayout drawer;
     private ListView lv;
     private GridLayout homeViewLayout;
     private File file;
-    private File[] files;
-    private File[] origFiles;
+    private File[] files, origFiles;
     private RecentFilesStack recent;
     private ArrayList<File> favourites;
     private EfficientAdapter adap;
     private FileFilter fileFilter;
     private Intent in;
-    private TextView current_duration, total_duration, title;
+    private TextView current_duration, total_duration, title, emptyListView;
     private ImageButton btn_play, btn_rev, btn_forward;
     private SeekBar seek;
     private byte[] data;
     private int sortCriterion = 0;
-    private boolean isValid, sortDesc = false, listFoldersFirst = true, storeRecentItems = true, showHiddenFiles = true;
     //Comparators for sorting
     private final Comparator<File> byName = (f1, f2) -> {
         int res = String.CASE_INSENSITIVE_ORDER.compare(f1.getName(), f2.getName());
         return (res == 0 ? f1.getName().compareTo(f2.getName()) : res);
     };
     private final Comparator<File> byDate = (f1, f2) -> {
-        if (f1.lastModified() > f2.lastModified()) return 1;
-        else if (f1.lastModified() < f2.lastModified()) return -1;
-        else return 0;
+        return Long.compare(f1.lastModified(), f2.lastModified());
     };
     private final Comparator<File> byDateDesc = (f1, f2) -> {
-        if (f1.lastModified() > f2.lastModified()) return -1;
-        else if (f1.lastModified() < f2.lastModified()) return 1;
-        else return 0;
+        return Long.compare(f2.lastModified(), f1.lastModified());
     };
     private final Comparator<File> bySize = (f1, f2) -> {
-        if (f1.length() > f2.length()) return 1;
-        else if (f1.length() < f2.length()) return -1;
-        else return 0;
+        return Long.compare(f1.length(), f2.length());
     };
     private final Comparator<File> bySizeDesc = (f1, f2) -> {
-        if (f1.length() > f2.length()) return -1;
-        else if (f1.length() < f2.length()) return 1;
-        else return 0;
+        return Long.compare(f2.length(), f1.length());
     };
 
     private static boolean deleteFiles(File f) {
@@ -156,7 +154,8 @@ public class FileViewer extends AppCompatActivity
                 deleted &= deleteFiles(arr[i]);
             }
             return deleted && f.delete();
-        } else return f.delete();
+        }
+        return f.delete();
     }
 
     private static String unpackZip(File zipFile, File targetDirectory) {
@@ -210,7 +209,7 @@ public class FileViewer extends AppCompatActivity
         String s = "";
         if (file.getParent() != null) {
             try {
-                ProcessBuilder processBuilder = new ProcessBuilder("ls", "-l").directory(new File(file.getParent()));// TODO CHECK IF THE FILE IS SD CARD PARENT IS NULL
+                ProcessBuilder processBuilder = new ProcessBuilder("ls", "-l").directory(new File(file.getParent()));
                 Process process = processBuilder.start();
                 PrintWriter out = new PrintWriter(new OutputStreamWriter(process.getOutputStream()));
                 BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()));
@@ -278,16 +277,17 @@ public class FileViewer extends AppCompatActivity
         navigationView.setNavigationItemSelectedListener(this);
         lv = findViewById(R.id.list);
         registerForContextMenu(lv);
-        lv.setEmptyView(findViewById(R.id.empty));
+        emptyListView = findViewById(R.id.empty);
+        lv.setEmptyView(emptyListView);
         lv.setOnItemClickListener((adapterView, view, i, l) -> openFile(files[i]));
         homeViewLayout = findViewById(R.id.home_view);
-        homeViewLayout.findViewById(R.id.btn_image_files).setOnClickListener(view -> listMediaFiles(1));
-        homeViewLayout.findViewById(R.id.btn_music_files).setOnClickListener(view -> listMediaFiles(2));
-        homeViewLayout.findViewById(R.id.btn_video_files).setOnClickListener(view -> listMediaFiles(3));
-        homeViewLayout.findViewById(R.id.btn_document_files).setOnClickListener(view -> listMediaFiles(4));
-        homeViewLayout.findViewById(R.id.btn_archive_files).setOnClickListener(view -> listMediaFiles(5));
-        homeViewLayout.findViewById(R.id.btn_text_files).setOnClickListener(view -> listMediaFiles(6));
-        homeViewLayout.findViewById(R.id.btn_apps).setOnClickListener(view -> listMediaFiles(7));
+        homeViewLayout.findViewById(R.id.btn_image_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Image));
+        homeViewLayout.findViewById(R.id.btn_music_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Audio));
+        homeViewLayout.findViewById(R.id.btn_video_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Video));
+        homeViewLayout.findViewById(R.id.btn_document_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Document));
+        homeViewLayout.findViewById(R.id.btn_archive_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Archive));
+        homeViewLayout.findViewById(R.id.btn_text_files).setOnClickListener(view -> listMediaFiles(MediaFileType.Text));
+        homeViewLayout.findViewById(R.id.btn_apps).setOnClickListener(view -> listMediaFiles(MediaFileType.APK));
         homeViewLayout.findViewById(R.id.btn_camera_folder).setOnClickListener(view -> {
             File f = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
             if (f == null || "".equals(f.getPath()) || !f.exists())
@@ -338,6 +338,7 @@ public class FileViewer extends AppCompatActivity
             final File f = new File(path);
             if (f.exists()) {
                 RelativeLayout storageView = (RelativeLayout) getLayoutInflater().inflate(R.layout.storage_view, null, false);
+                storageView.setBackgroundColor(android.R.drawable.dialog_holo_dark_frame);
                 TextView details = storageView.findViewById(R.id.storage_details);
                 TextView name = storageView.findViewById(R.id.storage_name);
                 ProgressBar storageBar = storageView.findViewById(R.id.storage_bar);
@@ -360,10 +361,10 @@ public class FileViewer extends AppCompatActivity
         }
 
         in = getIntent();
-        if (Intent.ACTION_VIEW.equals(in.getAction()) && in.getType() != null) {
+        if (Intent.ACTION_VIEW.equals(in.getAction())) {
             Uri uri = in.getData();
             if (uri != null) {
-                openFile(new File(uri.getPath()));
+                openFile(getFileFromURI(uri));
             }
         } else {
             switchToHomeView();
@@ -409,16 +410,10 @@ public class FileViewer extends AppCompatActivity
                     switchToHomeView();
                 else if (file != null)
                     updateFiles(file);
-                else
-                    //Todo: something here
-                    ;
                 break;
             case R.id.action_info:
                 if (file != null)
                     showProperties(file);
-                else
-                    //Todo: something here
-                    ;
                 break;
         }
         return super.onOptionsItemSelected(item);
@@ -577,15 +572,16 @@ public class FileViewer extends AppCompatActivity
             } else {
                 menu.add(Menu.NONE, 1, Menu.NONE, "Open with default system action");
                 String ext = Util.extension(current_file.getName());
-                if (Util.web_ext.contains(ext))
+                if (Util.web_ext.contains(ext)) {
                     menu.add(Menu.NONE, 2, Menu.NONE, "Preview");
+                }
                 menu.add(Menu.NONE, 3, Menu.NONE, "Share");
             }
             if (recentsView) {
                 menu.add(Menu.NONE, 4, Menu.NONE, "Remove from Recent Items");
             } else if (favouritesView) {
                 menu.add(Menu.NONE, 4, Menu.NONE, "Open parent directory");
-            } else {
+            } else if (current_file.canWrite()) {
                 menu.add(Menu.NONE, 4, Menu.NONE, "Delete");
             }
             menu.add(Menu.NONE, 5, Menu.NONE, favouritesView ? "Remove from Favourites" : "Add to Favourites");
@@ -627,8 +623,9 @@ public class FileViewer extends AppCompatActivity
                 share.setAction(Intent.ACTION_SEND);
                 MimeTypeMap myMime = MimeTypeMap.getSingleton();
                 String mimeType = myMime.getMimeTypeFromExtension(Util.extension(current_file.getName()));
+                Uri uri = FileProvider.getUriForFile(getApplicationContext(), getApplicationContext().getPackageName(), current_file);
                 share.setType(mimeType);
-                share.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(current_file));
+                share.putExtra(Intent.EXTRA_STREAM, uri);
                 try {
                     startActivity(share);
                 } catch (Exception e) {
@@ -717,7 +714,6 @@ public class FileViewer extends AppCompatActivity
 
     @Override
     public void onScroll(AbsListView absListView, int i, int i1, int i2) {
-
     }
 
     public void onActivityResult(int requestCode, int resultCode, Intent resultData) {
@@ -732,7 +728,7 @@ public class FileViewer extends AppCompatActivity
     }
 
     private void openFile(File current_file) {
-        if (!current_file.exists())
+        if (current_file == null || !current_file.exists())
             return;
         current_file.setReadable(true);
         if (!current_file.canRead()) {
@@ -770,115 +766,8 @@ public class FileViewer extends AppCompatActivity
                 Intent in = new Intent(FileViewer.this, HTMLViewer.class);
                 in.putExtra("file", current_file.getPath());
                 startActivity(in);
-            } else if (Util.audio_ext.contains(ext)) {
-                try {
-                    mp.setDataSource(current_file.getPath());
-                    mp.prepare();
-                    meta.setDataSource(current_file.getPath());
-                    data = meta.getEmbeddedPicture();
-                } catch (Exception e) {
-                    isValid = false;
-                    e.printStackTrace();
-                }
-                if (isValid) {
-                    ImageView album_art, icon;
-                    final View player = getLayoutInflater().inflate(R.layout.music_player, null);
-                    player.findViewById(R.id.icon);
-                    btn_play = player.findViewById(R.id.btn_play);
-                    btn_rev = player.findViewById(R.id.btn_rev);
-                    btn_forward = player.findViewById(R.id.btn_forward);
-                    current_duration = player.findViewById(R.id.current_duration);
-                    total_duration = player.findViewById(R.id.total_duration);
-                    seek = player.findViewById(R.id.seek);
-                    title = player.findViewById(R.id.title);
-                    icon = player.findViewById(R.id.imageView);
-                    album_art = player.findViewById(R.id.album_art);
-                    title.setText(current_file.getName());
-                    icon.setImageResource(R.drawable.file_music);
-                    if (data != null) {
-                        album_art.setImageBitmap(BitmapFactory.decodeByteArray(data, 0, data.length));
-                    }
-                    int duration = mp.getDuration();
-                    seek.setMax(duration);
-                    total_duration.setText(Util.getFormattedTimeDuration(duration));
-                    final Handler handler = new Handler();
-                    //Make sure you update Seekbar on UI thread
-                    final Runnable updateseek = new Runnable() {
-                        @Override
-                        public void run() {
-                            int pos = mp.getCurrentPosition();
-                            seek.setProgress(pos);
-                            current_duration.setText(Util.getFormattedTimeDuration(pos));
-                            handler.postDelayed(this, 1000);
-                        }
-                    };
-                    FileViewer.this.runOnUiThread(updateseek);
-                    seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                        @Override
-                        public void onProgressChanged(SeekBar seekBar, int position, boolean fromUser) {
-                            if (fromUser) {
-                                mp.seekTo(position);
-                                current_duration.setText(Util.getFormattedTimeDuration(position));
-                            }
-                        }
-
-                        @Override
-                        public void onStartTrackingTouch(SeekBar seekBar) {
-
-                        }
-
-                        @Override
-                        public void onStopTrackingTouch(SeekBar seekBar) {
-
-                        }
-                    });
-                    btn_play.setOnClickListener(view -> {
-                        if (mp.isPlaying()) {
-                            mp.pause();
-                            btn_play.setImageResource(android.R.drawable.ic_media_play);
-                        } else {
-                            mp.start();
-                            btn_play.setImageResource(android.R.drawable.ic_media_pause);
-                        }
-                    });
-                    btn_forward.setOnClickListener(view -> {
-                        int max = mp.getDuration();
-                        int newpos = mp.getCurrentPosition() + 5000;
-                        if (newpos > max) {
-                            mp.seekTo(max);
-                            seek.setProgress(max);
-                        } else {
-                            mp.seekTo(newpos);
-                            seek.setProgress(newpos);
-                        }
-                    });
-                    btn_rev.setOnClickListener(view -> {
-                        int newpos = mp.getCurrentPosition() - 5000;
-                        if (newpos > 0) {
-                            mp.seekTo(newpos);
-                            seek.setProgress(newpos);
-                        } else {
-                            mp.seekTo(0);
-                            seek.setProgress(0);
-                        }
-                    });
-                    final AlertDialog.Builder player_dialog = new AlertDialog.Builder(new ContextThemeWrapper(FileViewer.this, android.R.style.Theme_Black));
-                    player_dialog.setOnCancelListener(dialogInterface -> {
-                        handler.removeCallbacks(updateseek);
-                        mp.stop();
-                        mp.reset();
-                    });
-                    player_dialog.setView(player);
-                    player_dialog.show();
-                } else {
-                    showMsg("Invalid music file", 1);
-                }
-            } else if (Util.image_ext.contains(ext)) {
-                in = new Intent(FileViewer.this, ImageViewer.class);
-                in.putExtra("file", current_file.getPath());
-                startActivity(in);
-            } else if (Util.video_ext.contains(ext)) {
-                in = new Intent(FileViewer.this, VideoPlayer.class);
+            } else if ("epub".equals(ext)) {
+                in = new Intent(FileViewer.this, EPUBViewer.class);
                 in.putExtra("file", current_file.getPath());
                 startActivity(in);
             } else if (Util.opendoc_ext.contains(ext)) {
@@ -894,6 +783,116 @@ public class FileViewer extends AppCompatActivity
                     in = new Intent(FileViewer.this, TextViewer.class);
                     in.putExtra("file", current_file.getPath());
                     startActivity(in);
+                } else if ((mimeType != null && mimeType.contains("image")) || Util.image_ext.contains(ext)) {
+                    in = new Intent(FileViewer.this, ImageViewer.class);
+                    in.putExtra("file", current_file.getPath());
+                    startActivity(in);
+                } else if ((mimeType != null && mimeType.contains("video")) || Util.video_ext.contains(ext)) {
+                    in = new Intent(FileViewer.this, VideoPlayer.class);
+                    in.putExtra("file", current_file.getPath());
+                    startActivity(in);
+                } else if ((mimeType != null && mimeType.contains("audio")) || Util.audio_ext.contains(ext)) {
+                    try {
+                        mp.setDataSource(current_file.getPath());
+                        mp.prepare();
+                        meta.setDataSource(current_file.getPath());
+                        data = meta.getEmbeddedPicture();
+                    } catch (Exception e) {
+                        isValid = false;
+                        e.printStackTrace();
+                    }
+                    if (isValid) {
+                        ImageView album_art, icon;
+                        final View player = getLayoutInflater().inflate(R.layout.music_player, null);
+                        btn_play = player.findViewById(R.id.btn_play);
+                        btn_rev = player.findViewById(R.id.btn_rev);
+                        btn_forward = player.findViewById(R.id.btn_forward);
+                        current_duration = player.findViewById(R.id.current_duration);
+                        total_duration = player.findViewById(R.id.total_duration);
+                        seek = player.findViewById(R.id.seek);
+                        title = player.findViewById(R.id.title);
+                        icon = player.findViewById(R.id.imageView);
+                        album_art = player.findViewById(R.id.album_art);
+                        title.setText(current_file.getName());
+                        icon.setImageResource(R.drawable.file_music);
+                        if (data != null) {
+                            album_art.setImageBitmap(BitmapFactory.decodeByteArray(data, 0, data.length));
+                        }
+                        int duration = mp.getDuration();
+                        seek.setMax(duration);
+                        total_duration.setText(Util.getFormattedTimeDuration(duration));
+                        final Handler handler = new Handler();
+                        //Make sure you update Seekbar on UI thread
+                        final Runnable updateseek = new Runnable() {
+                            @Override
+                            public void run() {
+                                int pos = mp.getCurrentPosition();
+                                seek.setProgress(pos);
+                                current_duration.setText(Util.getFormattedTimeDuration(pos));
+                                handler.postDelayed(this, 1000);
+                            }
+                        };
+                        FileViewer.this.runOnUiThread(updateseek);
+                        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                            @Override
+                            public void onProgressChanged(SeekBar seekBar, int position, boolean fromUser) {
+                                if (fromUser) {
+                                    mp.seekTo(position);
+                                    current_duration.setText(Util.getFormattedTimeDuration(position));
+                                }
+                            }
+
+                            @Override
+                            public void onStartTrackingTouch(SeekBar seekBar) {
+
+                            }
+
+                            @Override
+                            public void onStopTrackingTouch(SeekBar seekBar) {
+
+                            }
+                        });
+                        btn_play.setOnClickListener(view -> {
+                            if (mp.isPlaying()) {
+                                mp.pause();
+                                btn_play.setImageResource(android.R.drawable.ic_media_play);
+                            } else {
+                                mp.start();
+                                btn_play.setImageResource(android.R.drawable.ic_media_pause);
+                            }
+                        });
+                        btn_forward.setOnClickListener(view -> {
+                            int max = mp.getDuration();
+                            int newpos = mp.getCurrentPosition() + 5000;
+                            if (newpos > max) {
+                                mp.seekTo(max);
+                                seek.setProgress(max);
+                            } else {
+                                mp.seekTo(newpos);
+                                seek.setProgress(newpos);
+                            }
+                        });
+                        btn_rev.setOnClickListener(view -> {
+                            int newpos = mp.getCurrentPosition() - 5000;
+                            if (newpos > 0) {
+                                mp.seekTo(newpos);
+                                seek.setProgress(newpos);
+                            } else {
+                                mp.seekTo(0);
+                                seek.setProgress(0);
+                            }
+                        });
+                        final AlertDialog.Builder player_dialog = new AlertDialog.Builder(new ContextThemeWrapper(FileViewer.this, android.R.style.Theme_Black));
+                        player_dialog.setOnCancelListener(dialogInterface -> {
+                            handler.removeCallbacks(updateseek);
+                            mp.stop();
+                            mp.reset();
+                        });
+                        player_dialog.setView(player);
+                        player_dialog.show();
+                    } else {
+                        showMsg("Invalid music file", 1);
+                    }
                 } else {
                     try {
                         Uri uri = FileProvider.getUriForFile(getApplicationContext(), getApplicationContext().getPackageName(), current_file);
@@ -918,13 +917,15 @@ public class FileViewer extends AppCompatActivity
         int duration;
         AlertDialog.Builder properties_dialog = new AlertDialog.Builder(FileViewer.this);
         View properties_view = getLayoutInflater().inflate(R.layout.properties_view, null);
-        TextView name = properties_view.findViewById(R.id.name);
-        TextView type = properties_view.findViewById(R.id.type);
-        TextView time = properties_view.findViewById(R.id.time);
+        final TextView name = properties_view.findViewById(R.id.name);
+        final TextView type = properties_view.findViewById(R.id.type);
+        final TextView time = properties_view.findViewById(R.id.time);
         final TextView size = properties_view.findViewById(R.id.size);
+        final TextView location = properties_view.findViewById(R.id.location);
         final TextView details = properties_view.findViewById(R.id.details);
         //Fetch properties
         name.setText(current_file.getName());
+        location.setText(current_file.getPath());
         SimpleDateFormat format = new SimpleDateFormat("dd-MMM-yyyy hh:mm:ss a");
         time.setText(format.format(current_file.lastModified()));
         properties_dialog.setTitle("Properties");
@@ -980,7 +981,10 @@ public class FileViewer extends AppCompatActivity
                     year = ((year == null || "".equals(year)) ? "Unknown" : year);
                     bitrate = meta.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE);
                     bitrate = ((bitrate == null || "".equals(bitrate)) ? "Unknown" : bitrate);
-                    meta.release();
+                    try {
+                        meta.release();
+                    } catch (IOException e) {
+                    }
                     info += "\nTrack Duration : " + Util.getFormattedTimeDuration(duration);
                     info += "\nAlbum : " + album;
                     info += "\nArtist : " + artist;
@@ -1023,7 +1027,10 @@ public class FileViewer extends AppCompatActivity
                     height = ((height == null || "".equals(height)) ? "Unknown" : height);
                     String width = meta.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
                     width = ((width == null || "".equals(width)) ? "Unknown" : width);
-                    meta.release();
+                    try {
+                        meta.release();
+                    } catch (IOException e) {
+                    }
                     info += "\nTrack Duration : " + Util.getFormattedTimeDuration(duration);
                     info += "\nBitrate : " + bitrate;
                     info += "\nWidth : " + width;
@@ -1137,6 +1144,7 @@ public class FileViewer extends AppCompatActivity
     private void updateList() {
         homeView = false;
         lv.setVisibility(View.VISIBLE);
+        emptyListView.setVisibility(View.VISIBLE);
         homeViewLayout.setVisibility(View.GONE);
         if (adap != null) {
             adap.notifyDataSetChanged();
@@ -1149,57 +1157,67 @@ public class FileViewer extends AppCompatActivity
         switch (scrollState) {
             case AbsListView.OnScrollListener.SCROLL_STATE_IDLE:
                 mBusy = false;
-                int first = view.getFirstVisiblePosition();
-                int count = view.getChildCount();
-                for (int i = 0; i < count; i++) {
-                    final File current_file = files[first + i];
-                    if (!current_file.exists())
-                        continue;
-                    holder.icon = view.getChildAt(i).findViewById(R.id.icon);
-                    if (current_file.isDirectory()) {
-                        holder.details.setText("");
-                        File[] temp = current_file.listFiles();
-                        int n = (temp != null ? temp.length : 0);
-                        holder.details.setText(n + " items");
-                        holder.icon.setImageResource(n > 0 ? R.drawable.folder : R.drawable.folder_empty);
-                    } else {
-                        holder.details.setText(Util.displaySize(current_file.length()));
-                        String ext = Util.extension(current_file.getName());
-                        if ("apk".equals(ext)) {
-                            String path = current_file.getPath();
-                            PackageManager pm = getPackageManager();
-                            PackageInfo pi = pm.getPackageArchiveInfo(path, 0);
-                            pi.applicationInfo.sourceDir = path;
-                            pi.applicationInfo.publicSourceDir = path;
-                            holder.icon.setImageDrawable(pi.applicationInfo.loadIcon(pm));
-                        } else if ("pdf".equals(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_pdf);
-                        } else if ("svg".equals(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_svg);
-                        } else if ("csv".equals(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_csv);
-                        } else if ("sqlite".equals(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_sqlite);
-                        } else if (Util.audio_ext.contains(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_music);
-                        } else if (Util.image_ext.contains(ext) || Util.video_ext.contains(ext)) {
-                            Glide.with(getApplicationContext()).load(Uri.fromFile(current_file)).placeholder(R.drawable.loading).into(holder.icon);
-                        } else if (Util.archive_ext.contains(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_archive);
-                        } else if (Util.doc_ext.contains(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_doc);
-                        } else if (Util.xl_ext.contains(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_xl);
-                        } else if (Util.ppt_ext.contains(ext)) {
-                            holder.icon.setImageResource(R.drawable.file_ppt);
-                        } else {
-                            holder.icon.setImageResource(R.drawable.file_default);
-                        }
-                    }
-                }
+                refreshList(view);
                 break;
             default:
                 mBusy = true;
+        }
+    }
+
+    private void refreshList(final AbsListView view) {
+        int first = view.getFirstVisiblePosition();
+        int count = view.getChildCount();
+        for (int i = 0; i < count; i++) {
+            final File current_file = files[first + i];
+            if (!current_file.exists())
+                continue;
+            holder.icon = view.getChildAt(i).findViewById(R.id.icon);
+            if (current_file.isDirectory()) {
+                holder.details.setText("");
+                File[] temp = current_file.listFiles();
+                int n = (temp != null ? temp.length : 0);
+                holder.details.setText(n + " items");
+                holder.icon.setImageResource(n > 0 ? R.drawable.folder : R.drawable.folder_empty);
+            } else {
+                MimeTypeMap myMime = MimeTypeMap.getSingleton();
+                String mimeType = myMime.getMimeTypeFromExtension(Util.extension(current_file.getName()));
+                holder.details.setText(Util.displaySize(current_file.length()));
+                String ext = Util.extension(current_file.getName());
+                if ("apk".equals(ext)) {
+                    String path = current_file.getPath();
+                    PackageManager pm = getPackageManager();
+                    PackageInfo pi = pm.getPackageArchiveInfo(path, 0);
+                    pi.applicationInfo.sourceDir = path;
+                    pi.applicationInfo.publicSourceDir = path;
+                    holder.icon.setImageDrawable(pi.applicationInfo.loadIcon(pm));
+                } else if ("pdf".equals(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_pdf);
+                } else if ("epub".equals(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_epub);
+                } else if ("svg".equals(ext)) {
+                    Glide.with(getApplicationContext()).load(Uri.fromFile(current_file)).placeholder(R.drawable.file_svg).into(holder.icon);
+                } else if ("csv".equals(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_csv);
+                } else if ("sqlite".equals(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_sqlite);
+                } else if ((mimeType != null && mimeType.contains("audio")) || Util.audio_ext.contains(ext)) {
+                    Glide.with(getApplicationContext()).load(Uri.fromFile(current_file)).placeholder(R.drawable.file_music).into(holder.icon);
+                } else if ((mimeType != null && mimeType.contains("image")) || Util.image_ext.contains(ext)) {
+                    Glide.with(getApplicationContext()).load(Uri.fromFile(current_file)).placeholder(R.drawable.file_image).into(holder.icon);
+                } else if ((mimeType != null && mimeType.contains("video")) || Util.video_ext.contains(ext)) {
+                    Glide.with(getApplicationContext()).load(Uri.fromFile(current_file)).placeholder(R.drawable.file_video).into(holder.icon);
+                } else if (Util.archive_ext.contains(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_archive);
+                } else if (Util.doc_ext.contains(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_doc);
+                } else if (Util.xl_ext.contains(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_xl);
+                } else if (Util.ppt_ext.contains(ext)) {
+                    holder.icon.setImageResource(R.drawable.file_ppt);
+                } else {
+                    holder.icon.setImageResource(R.drawable.file_default);
+                }
+            }
         }
     }
 
@@ -1276,6 +1294,28 @@ public class FileViewer extends AppCompatActivity
         }
     }
 
+    private File getFileFromURI(Uri uri) {
+        // try file first
+        String path = uri.getPath();
+        File f = new File(path);
+        if (f.exists()) {
+            return f;
+        }
+        String dirPath = Environment.getExternalStorageDirectory().getPath();
+        int idx = path.indexOf(dirPath);
+        if (idx > 0) {
+            //path overlap found
+            path = path.substring(idx + dirPath.length());
+        }
+        f = new File(dirPath + path);
+        if (f.exists()) {
+            return f;
+        }
+        // TODO: create temp file? using getContentResolver().openInputStream(uri);
+        showMsg("File not found: " + path, 1);
+        return null;
+    }
+
     private File[] sortFiles(File[] f) {
         int i, n;
         if (!showHiddenFiles) {
@@ -1308,9 +1348,7 @@ public class FileViewer extends AppCompatActivity
                 Arrays.sort(f, new Comparator<File>() {
                     @Override
                     public int compare(File f1, File f2) {
-                        if (f1.isDirectory() && !f2.isDirectory()) return -1;
-                        else if (!f1.isDirectory() && f2.isDirectory()) return 1;
-                        else return 0;
+                        return Boolean.compare(!f1.isDirectory(), !f2.isDirectory());
                     }
                 });
             } catch (Exception e) {
@@ -1325,7 +1363,6 @@ public class FileViewer extends AppCompatActivity
         for (int res : grantResults) {
             if (res != PackageManager.PERMISSION_GRANTED) {
                 showMsg("Permissions not granted", 0);
-                finish();
                 return;
             }
         }
@@ -1334,7 +1371,7 @@ public class FileViewer extends AppCompatActivity
     private List<String> getNeededPermissions() {
         List<String> listPermissionsNeeded = new ArrayList<>();
         if (SDK_INT >= Build.VERSION_CODES.M) {
-            for (String permission : requiredpermissions) {
+            for (String permission : requiredPermissions) {
                 if (ContextCompat.checkSelfPermission(getApplicationContext(), permission) != PackageManager.PERMISSION_GRANTED) {
                     listPermissionsNeeded.add(permission);
                 }
@@ -1347,6 +1384,11 @@ public class FileViewer extends AppCompatActivity
         List<String> neededPermissions = getNeededPermissions();
         if (!neededPermissions.isEmpty()) {
             ActivityCompat.requestPermissions(this, neededPermissions.toArray(new String[neededPermissions.size()]), REQUEST_ID_MULTIPLE_PERMISSIONS);
+        }
+        if (SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            Intent in = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+            in.setData(Uri.fromParts("package", getPackageName(), null));
+            startActivity(in);
         }
     }
 
@@ -1368,27 +1410,30 @@ public class FileViewer extends AppCompatActivity
         }
     }
 
-    private void listMediaFiles(int type) {
-        Uri uri = null;
+    private void listMediaFiles(MediaFileType type) {
         String toolbarTitle = "";
         String selectionQuery = null;
         String[] selectionArgs = null;
         ArrayList<File> fileList = null;
-        uri = MediaStore.Files.getContentUri("external");
+        Uri externalURI = MediaStore.Files.getContentUri("external");
+        Uri internalURI = MediaStore.Files.getContentUri("internal");
         switch (type) {
-            case 1: //images
+            case Image:
                 toolbarTitle = "Pictures";
                 fileList = getFileListFromQuery(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(MediaStore.Images.Media.INTERNAL_CONTENT_URI, selectionQuery, selectionArgs));
                 break;
-            case 2: //audio
+            case Audio:
                 toolbarTitle = "Music";
                 fileList = getFileListFromQuery(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(MediaStore.Audio.Media.INTERNAL_CONTENT_URI, selectionQuery, selectionArgs));
                 break;
-            case 3: //video
+            case Video:
                 toolbarTitle = "Videos";
                 fileList = getFileListFromQuery(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(MediaStore.Video.Media.INTERNAL_CONTENT_URI, selectionQuery, selectionArgs));
                 break;
-            case 4: //documents
+            case Document:
                 toolbarTitle = "Documents";
                 List<String> extList = new ArrayList<>(Util.doc_ext);
                 extList.addAll(Util.xl_ext);
@@ -1397,34 +1442,29 @@ public class FileViewer extends AppCompatActivity
                 extList.add("pdf");
                 selectionArgs = Util.getMimeTypeQueryArgs(extList);
                 selectionQuery = Util.getMimeTypeQuery(selectionArgs);
-                fileList = getFileListFromQuery(uri, selectionQuery, selectionArgs);
-                uri = MediaStore.Files.getContentUri("internal");
-                fileList.addAll(getFileListFromQuery(uri, selectionQuery, selectionArgs));
+                fileList = getFileListFromQuery(externalURI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(internalURI, selectionQuery, selectionArgs));
                 break;
-            case 5: //archives
+            case Archive:
                 toolbarTitle = "Archives";
                 selectionArgs = Util.getMimeTypeQueryArgs(Util.archive_ext);
                 selectionQuery = Util.getMimeTypeQuery(selectionArgs);
-                fileList = getFileListFromQuery(uri, selectionQuery, selectionArgs);
-                uri = MediaStore.Files.getContentUri("internal");
-                fileList.addAll(getFileListFromQuery(uri, selectionQuery, selectionArgs));
+                fileList = getFileListFromQuery(externalURI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(internalURI, selectionQuery, selectionArgs));
                 break;
-            case 6: //text files
+            case Text:
                 toolbarTitle = "Text files";
                 selectionArgs = Util.getMimeTypeQueryArgs(Util.txt_ext);
                 selectionQuery = Util.getMimeTypeQuery(selectionArgs);
-                fileList = getFileListFromQuery(uri, selectionQuery, selectionArgs);
-                uri = MediaStore.Files.getContentUri("internal");
-                fileList.addAll(getFileListFromQuery(uri, selectionQuery, selectionArgs));
+                fileList = getFileListFromQuery(externalURI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(internalURI, selectionQuery, selectionArgs));
                 break;
-            case 7: //apk files
+            case APK:
                 toolbarTitle = "Apps";
                 selectionArgs = Util.getMimeTypeQueryArgs(Collections.singletonList("apk"));
                 selectionQuery = Util.getMimeTypeQuery(selectionArgs);
-                uri = MediaStore.Files.getContentUri("external");
-                fileList = getFileListFromQuery(uri, selectionQuery, selectionArgs);
-                uri = MediaStore.Files.getContentUri("internal");
-                fileList.addAll(getFileListFromQuery(uri, selectionQuery, selectionArgs));
+                fileList = getFileListFromQuery(externalURI, selectionQuery, selectionArgs);
+                fileList.addAll(getFileListFromQuery(internalURI, selectionQuery, selectionArgs));
         }
         files = new File[fileList.size()];
         files = fileList.toArray(files);
@@ -1467,9 +1507,12 @@ public class FileViewer extends AppCompatActivity
 
     private void switchToHomeView() {
         homeView = true;
+        recentsView = false;
+        favouritesView = false;
         toolbar.setTitle("Vudit");
         homeViewLayout.setVisibility(View.VISIBLE);
         lv.setVisibility(View.GONE);
+        emptyListView.setVisibility(View.GONE);
     }
 
     private static class ViewHolder {

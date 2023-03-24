@@ -7,6 +7,8 @@
 ==========
 A file viewer for Android
 
+Desktop version here - https://github.com/praharshjain/Vudit-Desktop
+
 Features
 ----------------
 * Files listing
@@ -20,11 +22,11 @@ Supported file types and extensions -
 
 1. Media files:
 
-    Audio files - "mp3", "oog", "wav", "mid", "m4a", "amr"  
+    Audio files - "mp3", "ogg", "wav", "mid", "m4a", "amr"  
     
     Image files - "png", "jpg", "gif", "bmp", "jpeg", "webp", "svg"  
     
-    Video files - "mp4", "3gp", "mkv", "webm", "flv", "m4v"
+    Video files - "mp4", "3gp", "mkv", "webm", "flv", "3g2", "avi", "mov", "vob", "m4v"
 
 2. Document files:
 
